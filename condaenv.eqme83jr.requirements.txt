@@ -1,0 +1,9 @@
+torch>=2.0
+torchvision>=0.15
+onnx>=1.14
+onnxruntime>=1.16
+matplotlib>=3.7
+pandas>=2.0
+tabulate>=0.9
+tqdm>=4.65
+scipy>=1.10
