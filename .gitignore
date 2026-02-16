@@ -20,3 +20,17 @@ results/*.csv
 
 # Conda
 .env/
+
+# datasets
+data/
+*.tar.gz
+*.zip
+
+# IDE
+.idea/
+
+# model artifacts
+models/*.onnx
+models/*.onnx.data
+*.onnx
+*.onnx.data
