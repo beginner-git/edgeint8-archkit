@@ -75,7 +75,27 @@ def train_one_epoch(model, train_loader, criterion, optimizer, device="cpu"):
     # - 它内部包含 LogSoftmax + NLLLoss，是多分类任务的标准选择
     # - 输入是 raw logits（model 输出），不需要先过 softmax
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.4]: Implement train_one_epoch")
+    model.train()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    for batch_idx, (data, target) in enumerate(tqdm(train_loader, desc="Training", leave=False)):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss = criterion(output, target)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() * data.size(0)
+        pred = output.argmax(dim=1)
+        correct += pred.eq(target).sum().item()
+        total += data.size(0)
+
+    avg_loss = running_loss / total
+    accuracy = correct / total
+    return avg_loss, accuracy
 
 
 def evaluate(model, test_loader, criterion, device="cpu"):
@@ -109,7 +129,25 @@ def evaluate(model, test_loader, criterion, device="cpu"):
     # - Dropout 在 eval 模式下不丢弃任何神经元
     # - 量化和导出 ONNX 时也必须先 eval()
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.4]: Implement evaluate")
+    model.eval()
+    running_loss = 0.0
+    correct = 0
+    total = 0
+
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            loss = criterion(output, target)
+
+            running_loss += loss.item() * data.size(0)
+            pred = output.argmax(dim=1)
+            correct += pred.eq(target).sum().item()
+            total += data.size(0)
+
+    avg_loss = running_loss / total
+    accuracy = correct / total
+    return avg_loss, accuracy
 
 
 def train_model(model, train_loader, test_loader, epochs=10, lr=1e-3,
@@ -149,7 +187,32 @@ def train_model(model, train_loader, test_loader, epochs=10, lr=1e-3,
     #
     # Hint: Use torch.save(model.state_dict(), save_path) to save
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.4]: Implement train_model")
+    model = model.to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=lr)
+
+    history = {"train_loss": [], "test_loss": [], "test_acc": []}
+    best_acc = 0.0
+
+    for epoch in range(1, epochs + 1):
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
+
+        history["train_loss"].append(train_loss)
+        history["test_loss"].append(test_loss)
+        history["test_acc"].append(test_acc)
+
+        print(f"Epoch {epoch}/{epochs}  "
+              f"Train Loss: {train_loss:.4f}  Train Acc: {train_acc:.4f}  "
+              f"Test Loss: {test_loss:.4f}  Test Acc: {test_acc:.4f}")
+
+        if test_acc > best_acc and save_path is not None:
+            best_acc = test_acc
+            ensure_dir(os.path.dirname(save_path) if os.path.dirname(save_path) else ".")
+            torch.save(model.state_dict(), save_path)
+            print(f"  -> Saved best model (acc={best_acc:.4f}) to {save_path}")
+
+    return model, history
 
 
 # =============================================================================
@@ -170,7 +233,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     set_seed(args.seed)
-    device = "cpu"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     model_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
     ensure_dir(model_dir)
 
@@ -189,4 +253,38 @@ if __name__ == "__main__":
     #
     # Print summary after training (params count, final accuracy)
     # =========================================================================
-    print("TODO: Implement training main script")
+    if args.workload in ("1d", "all"):
+        print("=" * 60)
+        print("  Training Workload-1: 1D Signal CNN")
+        print("=" * 60)
+        model_1d = get_signal_cnn_1d(num_classes=5)
+        train_loader_1d, test_loader_1d = get_synthetic_signal_loaders(batch_size=args.batch_size)
+        save_path_1d = os.path.join(model_dir, "signal_cnn_1d.pth")
+        model_1d, history_1d = train_model(
+            model_1d, train_loader_1d, test_loader_1d,
+            epochs=args.epochs, lr=args.lr, device=device,
+            save_path=save_path_1d,
+        )
+        from src.utils.helpers import count_parameters
+        print(f"\n1D CNN Summary:")
+        print(f"  Parameters:     {count_parameters(model_1d):,}")
+        print(f"  Final Test Acc: {history_1d['test_acc'][-1]:.4f}")
+        print()
+
+    if args.workload in ("2d", "all"):
+        print("=" * 60)
+        print("  Training Workload-2: 2D Tiny CNN (CIFAR-10)")
+        print("=" * 60)
+        model_2d = get_tiny_cnn_2d(num_classes=10, in_channels=3)
+        train_loader_2d, test_loader_2d = get_cifar10_loaders(batch_size=args.batch_size)
+        save_path_2d = os.path.join(model_dir, "tiny_cnn_2d.pth")
+        model_2d, history_2d = train_model(
+            model_2d, train_loader_2d, test_loader_2d,
+            epochs=args.epochs, lr=args.lr, device=device,
+            save_path=save_path_2d,
+        )
+        from src.utils.helpers import count_parameters
+        print(f"\n2D CNN Summary:")
+        print(f"  Parameters:     {count_parameters(model_2d):,}")
+        print(f"  Final Test Acc: {history_2d['test_acc'][-1]:.4f}")
+        print()

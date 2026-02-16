@@ -39,7 +39,13 @@ def download_cifar10(data_dir="data/cifar10"):
     # CIFAR-10 包含 10 个类别：
     # airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.3]: Implement CIFAR-10 download")
+    from torchvision import datasets
+    train_set = datasets.CIFAR10(root=data_dir, train=True, download=True)
+    test_set = datasets.CIFAR10(root=data_dir, train=False, download=True)
+    print(f"Train samples: {len(train_set)}")
+    print(f"Test samples:  {len(test_set)}")
+    print(f"Classes: {train_set.classes}")
+    print(f"Image shape: {train_set[0][0].size}")  # PIL Image size
 
 
 def verify_dataset(data_dir="data/cifar10"):
@@ -49,7 +55,24 @@ def verify_dataset(data_dir="data/cifar10"):
     #
     # Print: num samples, image shape, num classes, class distribution
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.3]: Implement dataset verification")
+    from torchvision import datasets
+    import numpy as np
+
+    train_set = datasets.CIFAR10(root=data_dir, train=True, download=False)
+    test_set = datasets.CIFAR10(root=data_dir, train=False, download=False)
+
+    print(f"Number of training samples: {len(train_set)}")
+    print(f"Number of test samples:     {len(test_set)}")
+    print(f"Image shape: {train_set[0][0].size}")  # PIL Image size
+    print(f"Number of classes: {len(train_set.classes)}")
+    print(f"Classes: {train_set.classes}")
+
+    # Class distribution
+    train_labels = np.array(train_set.targets)
+    print("\nClass distribution (train):")
+    for i, cls_name in enumerate(train_set.classes):
+        count = (train_labels == i).sum()
+        print(f"  {cls_name}: {count}")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,18 @@
 > 按顺序读、按顺序做，每一步都有**要学什么**、**怎么做**、**怎么验证**、**踩坑提醒**。
 > 预计总周期：8-12 周。节奏建议：**1.5× 缓冲**，不给自己不必要的压力。
 
+### ⚡ 关于 Part A 的说明
+
+> **Part A（模型定义、训练、ONNX 导出、基准测试）的代码已经预先实现好了。**
+> CNN 搭建和训练是标准工程代码，不是本项目的学习重点。你要做的核心差异化在
+> **Part B（手写量化数学）、Part C（定点闭环）和 Part D（架构评估）**。
+>
+> 对于 Part A，你的任务是：
+> 1. **通读代码**，理解每个文件做了什么（shape 变化、API 用法）
+> 2. **跑通流水线**：训练 → 导出 → 测试，拿到 FP32 基线数据
+> 3. **按需修改/调试**：如果训练效果不好、导出有问题，在已有框架上调整
+> 4. **不需要从零写**：把精力省给 Part B/C/D
+
 ---
 
 ## 0. 开始之前：你需要理解的大图
@@ -88,156 +100,56 @@ git commit -m "Initial skeleton: project structure with TODO templates"
 
 ---
 
-## 2. Phase 1：端到端推理 Pipeline — Part A（第 1-2 周）
+## 2. Phase 1：端到端推理 Pipeline — Part A（第 1-2 天）
 
-> **目标**：训练两个小模型，导出 ONNX，用 ORT 跑通 FP32 推理，建立性能基线。
-> **这是地基**，后面所有 Part 都依赖这个。
+> **Part A 的代码已经写好了！** 你不需要从零实现。
+> 你的任务是：**通读代码 → 跑通流水线 → 拿到 FP32 基线 → 按需调试**。
 
-### 2.1 Step 1.1 — 实现 1D CNN 模型
+### 2.1 通读代码（0.5 天）
 
-**文件**：`models/signal_cnn_1d.py`
+按以下顺序阅读，重点理解 **shape 变化** 和 **API 用法**：
 
-**要学什么**：
-- PyTorch `nn.Module` 的基本用法
-- Conv1d 的参数含义：`in_channels`, `out_channels`, `kernel_size`
-- AdaptiveAvgPool1d 的作用：把不定长输出变成固定长度
+| 文件 | 重点理解 | 时间 |
+|------|---------|------|
+| `models/signal_cnn_1d.py` | Conv1d 的 kernel_size/padding 如何保持序列长度，AdaptiveAvgPool1d 的作用 | 15 min |
+| `models/tiny_cnn_2d.py` | Conv-BN-ReLU block 模式，MaxPool2d 如何降维，BN folding 的概念 | 15 min |
+| `src/utils/data.py` | CIFAR-10 的 normalize 参数怎么来的，合成信号的频率分类原理 | 15 min |
+| `models/train.py` | 标准训练循环（forward→loss→backward→step），`model.eval()` 的重要性 | 15 min |
+| `scripts/export_onnx.py` | `torch.onnx.export()` 的 dynamic_axes 参数，ORT 验证方法 | 10 min |
+| `scripts/bench.py` | 为什么需要 warmup，`time.perf_counter()` 比 `time.time()` 精度高 | 10 min |
 
-**怎么做**：
-1. 打开文件，阅读 docstring 和 TODO 注释
-2. 注释里已经给出了详细的架构设计：3 层 Conv1d + Pool + FC
-3. 按 TODO 的 Steps 一步步填入代码
-4. 实现 `__init__` 里定义层，`forward` 里写前向传播
+**阅读时带着问题**：
+- 1D CNN 的每一层输出 shape 是什么？（看 forward 里的注释）
+- 2D CNN 总参数量大概多少？哪一层参数最多？
+- 合成信号的 5 个类别频率分别是什么？
+- ONNX 导出时为什么要 `model.eval()`？
 
-**自测**：
+### 2.2 跑通流水线（0.5 天）
+
 ```bash
-python -m models.signal_cnn_1d
-# 应输出 "Output shape: torch.Size([2, 5])" 和参数量
+# 1. 训练模型（两个 workload 各跑 10 epoch，约 5-10 分钟）
+python -m models.train --workload all --epochs 10
+
+# 2. 导出 ONNX
+python scripts/export_onnx.py --workload all
+
+# 3. FP32 基准测试
+python scripts/bench.py --workload 2d --model models/tiny_cnn_2d.onnx
+python scripts/bench.py --workload 1d --model models/signal_cnn_1d.onnx
 ```
 
-**踩坑提醒**：
-- `view()` 或 `flatten()` 把 3D tensor 变成 2D 前，注意 batch 维度
-- 参数量应该在 ~25K，如果差太多检查通道数
+### 2.3 按需调试
 
----
+如果某一步出问题，常见原因：
 
-### 2.2 Step 1.2 — 实现 2D CNN 模型
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 训练 loss 不下降 | 学习率太大 | 试 `--lr 0.001` 或 `--lr 0.01` |
+| ONNX 导出报错 | 模型未 eval | 代码已处理，检查 .pth 文件是否存在 |
+| ORT 精度对不上 | BN 在 training mode | 代码已处理 |
+| bench.py 找不到模型 | 路径问题 | 确认 models/ 下有 .onnx 文件 |
 
-**文件**：`models/tiny_cnn_2d.py`
-
-**要学什么**：
-- Conv2d + BatchNorm + ReLU 的标准 block 模式
-- BatchNorm 在推理时的行为（fold 到 Conv 里）
-- MaxPool2d 对 feature map 尺寸的影响
-
-**怎么做**：
-1. 同样阅读 TODO 注释，架构已经设计好
-2. 3 个 Conv Block + AdaptiveAvgPool2d + FC
-3. 注意 `MaxPool2d(2)` 每次把 spatial 尺寸减半
-
-**自测**：
-```bash
-python -m models.tiny_cnn_2d
-# 应输出 "Output shape: torch.Size([2, 10])" 和参数量 (~120K)
-```
-
----
-
-### 2.3 Step 1.3 — 实现数据加载
-
-**文件**：`src/utils/data.py`
-
-**要学什么**：
-- `torchvision.datasets.CIFAR10` 的使用
-- 数据标准化（为什么要 normalize，mean/std 怎么来的）
-- 合成数据的生成（不同频率的正弦波 + 噪声 → 分类任务）
-
-**怎么做**：
-1. CIFAR-10：用 `torchvision.datasets.CIFAR10` 加载，标准化参数已经在注释里给出
-2. 合成信号：生成 5 类不同频率的正弦波（2/5/8/11/14 Hz）+ 高斯噪声
-3. 校准数据集：从训练集中采样一个子集，batch_size=1
-
-**自测**：
-```bash
-python -m src.utils.data
-# 应输出数据集大小和 batch shape
-```
-
----
-
-### 2.4 Step 1.4 — 训练模型
-
-**文件**：`models/train.py`
-
-**要学什么**：
-- 标准训练循环：forward → loss → backward → optimizer.step()
-- 交叉熵损失函数 `CrossEntropyLoss`
-- 保存/加载 checkpoint（`torch.save` / `torch.load`）
-
-**怎么做**：
-1. 实现 `train_one_epoch()`：遍历 dataloader，前向 → 算 loss → 反向 → 更新
-2. 实现 `evaluate()`：`with torch.no_grad()` 模式下计算准确率
-3. 实现 `train_model()`：循环调用上面两个函数，保存最佳权重
-
-**运行**：
-```bash
-python models/train.py --workload 2d --epochs 20
-python models/train.py --workload 1d --epochs 20
-```
-
-**验证**：
-- 2D CNN on CIFAR-10 应达到 ~70-80% accuracy（不需要高，够分析就行）
-- 1D CNN on 合成信号应达到 >90% accuracy
-- `models/` 目录下应出现 `.pth` 权重文件
-
----
-
-### 2.5 Step 1.5 — 导出 ONNX
-
-**文件**：`scripts/export_onnx.py`
-
-**要学什么**：
-- `torch.onnx.export()` 的用法
-- 什么是 ONNX（Open Neural Network Exchange）以及为什么要用它
-- `dynamic_axes` 的意义（让 batch size 灵活）
-- ONNX 验证：导出后重新加载，对比 PyTorch 和 ORT 的输出
-
-**怎么做**：
-1. 加载 `.pth` 权重
-2. 创建 dummy input（和训练时同 shape）
-3. `torch.onnx.export()` 导出
-4. `onnx.checker.check_model()` 验证模型合法性
-5. 用 ORT 推理同一个输入，对比与 PyTorch 的输出差异（应 < 1e-5）
-
-**运行**：
-```bash
-python scripts/export_onnx.py --workload 2d
-python scripts/export_onnx.py --workload 1d
-```
-
-**踩坑提醒**：
-- 如果有 BatchNorm，导出前先 `model.eval()`
-- `opset_version` 建议用 13 或更高
-
----
-
-### 2.6 Step 1.6 — FP32 基准测试
-
-**文件**：`scripts/bench.py`
-
-**要学什么**：
-- 用 ORT (`InferenceSession`) 做推理
-- 如何正确测量延迟（warmup + 多次运行取统计）
-- 模型大小的度量（文件大小、参数量）
-
-**怎么做**：
-1. `measure_latency()`：先 warmup 10 次，再正式测量 100 次，取均值/P95
-2. `measure_accuracy()`：把测试集全部过一遍 ORT，计算 top-1 accuracy
-3. `measure_model_size()`：`os.path.getsize()` 获取文件大小
-
-**运行**：
-```bash
-python scripts/bench.py --workload 2d
-```
+**如果你想修改模型结构**（如调整通道数、加 Dropout 等），直接在已有代码上改即可。
 
 ### Phase 1 检查点
 
@@ -253,6 +165,8 @@ python scripts/bench.py --workload 2d
 #   Latency (batch=1): 0.85 ms
 #   Model size: 0.48 MB
 ```
+
+> **过了这个检查点就直接进 Part B**，这才是你要花时间的地方。
 
 ---
 
@@ -710,19 +624,22 @@ python scripts/visualize.py  # 生成 DSE 趋势图
 ## 7. 时间线总览
 
 ```
-Week 0     ┃ 环境搭建、通读项目
-Week 1-2   ┃ Part A：模型训练、ONNX 导出、FP32 基线
+Day 1-2    ┃ 环境搭建、通读 Part A 代码、跑通流水线、拿到 FP32 基线
+            ┃ ├── Part A 代码已预置，只需阅读理解 + 运行
             ┃ ├── 论文：开始读 Eyeriss
-Week 2-4   ┃ Part B：手写量化、ORT PTQ 扫描、策略对比
+Week 1-3   ┃ Part B：手写量化、ORT PTQ 扫描、策略对比 ← 从这里开始真正动手写
             ┃ ├── 论文：读 Timeloop
-Week 4-7   ┃ Part C：定点推导、INT8 卷积核、Golden Test
+Week 3-6   ┃ Part C：定点推导、INT8 卷积核、Golden Test
             ┃ ├── 论文：读 Gemmini
             ┃ ├── 撰写 fixed_point_note.md
-Week 7-12  ┃ Part D：SCALE-Sim、DSE、趋势分析
+Week 6-10  ┃ Part D：SCALE-Sim、DSE、趋势分析
             ┃ ├── 论文：读 NVDLA
             ┃ ├── 撰写最终 report.md
             ┃ └── 整理 GitHub repo
 ```
+
+> **省下的 1-2 周时间**：Part A 预置后，你可以更早进入 Part B/C，
+> 在核心差异化的内容上花更多时间。
 
 ---
 

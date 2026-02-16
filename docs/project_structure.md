@@ -428,14 +428,14 @@ EdgeINT8-ArchKit/
 
 | 状态 | 文件数 | 说明 |
 |------|--------|------|
-| **已完成** | 12 | 包初始化文件、配置文件、`helpers.py`、文档 |
-| **骨架/模板** | 20 | 含详细 TODO 注释和架构设计，待逐步实现 |
+| **已完成（Part A + 基础）** | 21 | 模型定义、训练、数据加载、ONNX 导出、基准测试、profiling、helpers、配置文件 |
+| **骨架/模板（Part B/C/D）** | 11 | 量化模块、定点模块、架构评估模块——这些是你要手写的核心 |
 
 ### 按 Part 分类的实现路径
 
 | 阶段 | 涉及文件 | 预计周数 | 关键检查点 |
 |------|----------|----------|-----------|
-| **Part A** | `models/`, `data/`, `export_onnx.py`, `bench.py` | 1-2 周 | FP32 基线结果输出 |
-| **Part B** | `src/quant/`, `quantize_ptq.py`, `visualize.py` | 2-4 周 | FP32 vs INT8 对比表 |
-| **Part C** | `src/fixed_point/`, `docs/fixed_point_note.md` | 4-7 周 | 所有 Golden Test 通过 |
-| **Part D** | `src/arch/`, `run_arch_eval.py`, `report.md` | 7-12 周 | DSE 趋势图 + 最终报告 |
+| **Part A** | `models/`, `data/`, `export_onnx.py`, `bench.py` | **已预置** ✅ | 跑通即可拿到 FP32 基线 |
+| **Part B** | `src/quant/`, `quantize_ptq.py`, `visualize.py` | 1-3 周 | FP32 vs INT8 对比表 |
+| **Part C** | `src/fixed_point/`, `docs/fixed_point_note.md` | 3-6 周 | 所有 Golden Test 通过 |
+| **Part D** | `src/arch/`, `run_arch_eval.py`, `report.md` | 6-10 周 | DSE 趋势图 + 最终报告 |

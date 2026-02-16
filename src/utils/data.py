@@ -66,7 +66,26 @@ def get_cifar10_loaders(batch_size=64, data_dir="data/cifar10", num_workers=0):
     # - 对量化的影响：归一化后的数据范围大约在 [-2, 2]，
     #   与 INT8 的 [-128, 127] 映射后，每个量化步长约 0.03
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.3]: Implement get_cifar10_loaders")
+    from torchvision import datasets, transforms
+
+    # Standard CIFAR-10 transforms
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
+                             std=[0.2470, 0.2435, 0.2616]),
+    ])
+
+    train_set = datasets.CIFAR10(root=data_dir, train=True,
+                                 download=True, transform=transform)
+    test_set = datasets.CIFAR10(root=data_dir, train=False,
+                                download=True, transform=transform)
+
+    train_loader = DataLoader(train_set, batch_size=batch_size,
+                              shuffle=True, num_workers=num_workers)
+    test_loader = DataLoader(test_set, batch_size=batch_size,
+                             shuffle=False, num_workers=num_workers)
+
+    return train_loader, test_loader
 
 
 def get_synthetic_signal_loaders(batch_size=64, num_samples=5000,
@@ -131,7 +150,37 @@ def get_synthetic_signal_loaders(batch_size=64, num_samples=5000,
     # - 可以精确控制信号特征（频率、噪声、类别）
     # - 对 1D CNN 来说，频率分类是一个非常自然的任务
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.3]: Implement get_synthetic_signal_loaders")
+    np.random.seed(seed)
+    t = np.linspace(0, 1, seq_len)  # Time axis
+
+    X = np.zeros((num_samples, num_channels, seq_len), dtype=np.float32)
+    y = np.zeros(num_samples, dtype=np.int64)
+
+    for i in range(num_samples):
+        class_idx = i % num_classes
+        y[i] = class_idx
+        # Each class has a base frequency
+        freq = 2.0 + class_idx * 3.0  # Classes: 2Hz, 5Hz, 8Hz, 11Hz, 14Hz
+        # Signal = sin(2*pi*freq*t) + noise
+        signal = np.sin(2 * np.pi * freq * t)
+        noise = np.random.randn(seq_len) * 0.3
+        X[i, 0, :] = signal + noise
+
+    # Split into train/test (80/20)
+    split = int(0.8 * num_samples)
+    # Shuffle
+    indices = np.random.permutation(num_samples)
+    X, y = X[indices], y[indices]
+
+    train_dataset = TensorDataset(torch.tensor(X[:split]),
+                                  torch.tensor(y[:split]))
+    test_dataset = TensorDataset(torch.tensor(X[split:]),
+                                 torch.tensor(y[split:]))
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
+    return train_loader, test_loader
 
 
 def create_calibration_dataset(data_loader, num_samples=100):
@@ -170,7 +219,20 @@ def create_calibration_dataset(data_loader, num_samples=100):
     # ORT 的 CalibrationDataReader 逐个样本读取（get_next 返回一个样本），
     # 所以 calibration loader 用 batch_size=1 最方便。
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.3]: Implement create_calibration_dataset")
+    data_list = []
+    label_list = []
+    count = 0
+    for data, labels in data_loader:
+        data_list.append(data)
+        label_list.append(labels)
+        count += data.shape[0]
+        if count >= num_samples:
+            break
+
+    all_data = torch.cat(data_list)[:num_samples]
+    all_labels = torch.cat(label_list)[:num_samples]
+    calib_dataset = TensorDataset(all_data, all_labels)
+    return DataLoader(calib_dataset, batch_size=1, shuffle=False)
 
 
 if __name__ == "__main__":

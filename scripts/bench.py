@@ -85,7 +85,31 @@ def measure_latency(onnx_path, dummy_input_np, num_warmup=10, num_runs=100):
     # - 比 time.time() 精度更高（纳秒级）
     # - 适合测量短时间间隔
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.6]: Implement latency measurement")
+    import onnxruntime as ort
+
+    session = ort.InferenceSession(onnx_path,
+                                   providers=['CPUExecutionProvider'])
+    input_name = session.get_inputs()[0].name
+
+    # Warmup (critical for accurate measurement!)
+    for _ in range(num_warmup):
+        session.run(None, {input_name: dummy_input_np})
+
+    # Measure
+    latencies = []
+    for _ in range(num_runs):
+        start = time.perf_counter()
+        session.run(None, {input_name: dummy_input_np})
+        latencies.append((time.perf_counter() - start) * 1000)  # ms
+
+    latencies = np.array(latencies)
+    return {
+        'mean_ms': float(np.mean(latencies)),
+        'std_ms':  float(np.std(latencies)),
+        'p50_ms':  float(np.percentile(latencies, 50)),
+        'p99_ms':  float(np.percentile(latencies, 99)),
+        'min_ms':  float(np.min(latencies)),
+    }
 
 
 def measure_accuracy(onnx_path, test_loader):
@@ -113,7 +137,23 @@ def measure_accuracy(onnx_path, test_loader):
     #
     # Note: ORT 接受 numpy array 作为输入，不是 torch tensor！
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.6]: Implement accuracy measurement")
+    import onnxruntime as ort
+
+    session = ort.InferenceSession(onnx_path,
+                                   providers=['CPUExecutionProvider'])
+    input_name = session.get_inputs()[0].name
+
+    correct = 0
+    total = 0
+    for data, target in test_loader:
+        data_np = data.numpy()
+        output = session.run(None, {input_name: data_np})
+        pred = np.argmax(output[0], axis=1)
+        correct += (pred == target.numpy()).sum()
+        total += target.shape[0]
+
+    accuracy = correct / total
+    return float(accuracy)
 
 
 def measure_model_size(onnx_path):
@@ -138,7 +178,13 @@ def benchmark_single(onnx_path, test_loader, dummy_input_np):
     #     'latency': measure_latency(onnx_path, dummy_input_np),
     # }
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.6]: Implement benchmark_single")
+    result = {
+        'model_path': onnx_path,
+        'size_mb': measure_model_size(onnx_path),
+        'accuracy': measure_accuracy(onnx_path, test_loader),
+        'latency': measure_latency(onnx_path, dummy_input_np),
+    }
+    return result
 
 
 def benchmark_comparison(model_paths, test_loader, dummy_input_np):
@@ -168,7 +214,55 @@ def benchmark_comparison(model_paths, test_loader, dummy_input_np):
     #
     # Save results to CSV: results/tables/benchmark_comparison.csv
     # =========================================================================
-    raise NotImplementedError("TODO [Step 2.4]: Implement benchmark_comparison")
+    from tabulate import tabulate
+
+    results = []
+    for name, path in model_paths.items():
+        print(f"\nBenchmarking: {name} ({path})")
+        result = benchmark_single(path, test_loader, dummy_input_np)
+        result['name'] = name
+        results.append(result)
+
+    # Calculate speedup relative to first model (FP32 baseline)
+    baseline_latency = results[0]['latency']['mean_ms']
+    for r in results:
+        r['speedup'] = baseline_latency / r['latency']['mean_ms']
+
+    # Print formatted comparison table
+    headers = ["Model", "Accuracy", "Latency(ms)", "Size(MB)", "Speedup"]
+    rows = []
+    for r in results:
+        rows.append([
+            r['name'],
+            f"{r['accuracy']:.4f}",
+            f"{r['latency']['mean_ms']:.2f} +/- {r['latency']['std_ms']:.2f}",
+            f"{r['size_mb']:.2f}",
+            f"{r['speedup']:.2f}x",
+        ])
+    print("\n" + tabulate(rows, headers=headers, tablefmt="grid"))
+
+    # Save results to CSV
+    csv_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "results", "tables")
+    ensure_dir(csv_dir)
+    csv_path = os.path.join(csv_dir, "benchmark_comparison.csv")
+    csv_rows = []
+    for r in results:
+        csv_rows.append({
+            'model': r['name'],
+            'accuracy': f"{r['accuracy']:.4f}",
+            'latency_mean_ms': f"{r['latency']['mean_ms']:.2f}",
+            'latency_std_ms': f"{r['latency']['std_ms']:.2f}",
+            'latency_p50_ms': f"{r['latency']['p50_ms']:.2f}",
+            'latency_p99_ms': f"{r['latency']['p99_ms']:.2f}",
+            'size_mb': f"{r['size_mb']:.2f}",
+            'speedup': f"{r['speedup']:.2f}",
+        })
+    from src.utils.helpers import save_dict_to_csv
+    save_dict_to_csv(csv_rows, csv_path)
+    print(f"\nResults saved to {csv_path}")
+
+    return results
 
 
 def format_results_table(results):
@@ -196,7 +290,20 @@ def format_results_table(results):
     #       ])
     #   print(tabulate(rows, headers=["Model", "Acc", "Latency(ms)", "Size(MB)"]))
     # =========================================================================
-    raise NotImplementedError("TODO [Step 1.6]: Implement format_results_table")
+    from tabulate import tabulate
+
+    rows = []
+    for r in results:
+        rows.append([
+            r['name'],
+            f"{r['accuracy']:.4f}",
+            f"{r['latency']['mean_ms']:.2f} +/- {r['latency']['std_ms']:.2f}",
+            f"{r['size_mb']:.2f}",
+        ])
+    table_str = tabulate(rows, headers=["Model", "Acc", "Latency(ms)", "Size(MB)"],
+                         tablefmt="grid")
+    print(table_str)
+    return table_str
 
 
 if __name__ == "__main__":
@@ -224,4 +331,46 @@ if __name__ == "__main__":
     # 5. If --all: find all .onnx files in models/ and compare
     # 6. Save results to results/tables/
     # =========================================================================
-    print("TODO: Implement benchmarking main script")
+    # 1. Load test data based on workload choice
+    from src.utils.data import get_cifar10_loaders, get_synthetic_signal_loaders
+
+    if args.workload == "2d":
+        _, test_loader = get_cifar10_loaders()
+        # Create appropriate dummy input (numpy) — CIFAR-10: [1, 3, 32, 32]
+        dummy_input_np = np.random.randn(1, 3, 32, 32).astype(np.float32)
+    else:
+        _, test_loader = get_synthetic_signal_loaders()
+        # Synthetic 1D signal: [1, 1, 128]
+        dummy_input_np = np.random.randn(1, 1, 128).astype(np.float32)
+
+    # 3. If --model: benchmark single model
+    if args.model:
+        print(f"\nBenchmarking single model: {args.model}")
+        result = benchmark_single(args.model, test_loader, dummy_input_np)
+        result['name'] = os.path.basename(args.model)
+        format_results_table([result])
+
+    # 4. If --compare: benchmark and compare multiple models
+    elif args.compare:
+        model_paths = {}
+        for p in args.compare:
+            model_paths[os.path.basename(p)] = p
+        benchmark_comparison(model_paths, test_loader, dummy_input_np)
+
+    # 5. If --all: find all .onnx files in models/ and compare
+    elif args.all:
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "models")
+        if not os.path.isdir(models_dir):
+            print(f"Models directory not found: {models_dir}")
+            sys.exit(1)
+        onnx_files = sorted([f for f in os.listdir(models_dir) if f.endswith(".onnx")])
+        if not onnx_files:
+            print(f"No ONNX models found in {models_dir}")
+            sys.exit(1)
+        model_paths = {f: os.path.join(models_dir, f) for f in onnx_files}
+        print(f"Found {len(model_paths)} ONNX models: {list(model_paths.keys())}")
+        benchmark_comparison(model_paths, test_loader, dummy_input_np)
+
+    else:
+        parser.print_help()

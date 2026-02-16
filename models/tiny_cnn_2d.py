@@ -60,44 +60,25 @@ class TinyCNN2D(nn.Module):
         """
         super().__init__()
 
-        # =====================================================================
-        # TODO [Step 1.2]: Implement the network layers
-        #
-        # Build a 3-block 2D CNN. Each block = Conv2d + BatchNorm2d + ReLU:
-        #
-        #   Block 1:
-        #     conv1: Conv2d(in_channels, 32, kernel_size=3, padding=1)
-        #     bn1:   BatchNorm2d(32)
-        #     pool1: MaxPool2d(kernel_size=2, stride=2)
-        #
-        #   Block 2:
-        #     conv2: Conv2d(32, 64, kernel_size=3, padding=1)
-        #     bn2:   BatchNorm2d(64)
-        #     pool2: MaxPool2d(kernel_size=2, stride=2)
-        #
-        #   Block 3:
-        #     conv3: Conv2d(64, 128, kernel_size=3, padding=1)
-        #     bn3:   BatchNorm2d(128)
-        #
-        #   Head:
-        #     global_pool: AdaptiveAvgPool2d(output_size=1)
-        #     fc: Linear(128, num_classes)
-        #     relu: ReLU (shared)
-        #
-        # 为什么用 kernel_size=3？
-        # - 3×3 是现代 CNN 最常用的 kernel，VGG 论文证明了堆叠 3×3 比用大 kernel 更高效
-        # - 两个 3×3 的感受野 = 一个 5×5，但参数更少
-        # - 对 NPU 硬件来说，3×3 也是最常优化的 kernel size
-        #
-        # 为什么用 BatchNorm？
-        # - 加速训练收敛
-        # - 推理时可以折叠到 Conv 里（BN folding），不增加推理成本
-        # - 量化时需要处理 BN folding 后的权重分布
-        #
-        # Hint: Use nn.Conv2d, nn.BatchNorm2d, nn.ReLU, nn.MaxPool2d,
-        #       nn.AdaptiveAvgPool2d, nn.Linear
-        # =====================================================================
-        raise NotImplementedError("TODO [Step 1.2]: Define network layers")
+        # Block 1: Conv + BN + ReLU + MaxPool
+        # 3×3 kernel 是 NPU 最常优化的尺寸，BN 推理时会被 fold 进 Conv
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Block 2
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # Block 3
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+
+        # Classification head
+        self.relu = nn.ReLU()
+        self.global_pool = nn.AdaptiveAvgPool2d(output_size=1)
+        self.fc = nn.Linear(128, num_classes)
 
     def forward(self, x):
         """
@@ -110,25 +91,19 @@ class TinyCNN2D(nn.Module):
         Returns:
             Output tensor of shape [batch_size, num_classes]
         """
-        # =====================================================================
-        # TODO [Step 1.2]: Implement the forward pass
-        #
-        # Sequence (trace the shapes!):
-        #   x = relu(bn1(conv1(x)))   # [B, 3, 32, 32]  -> [B, 32, 32, 32]
-        #   x = pool1(x)              # [B, 32, 32, 32]  -> [B, 32, 16, 16]
-        #   x = relu(bn2(conv2(x)))   # [B, 32, 16, 16]  -> [B, 64, 16, 16]
-        #   x = pool2(x)              # [B, 64, 16, 16]  -> [B, 64, 8, 8]
-        #   x = relu(bn3(conv3(x)))   # [B, 64, 8, 8]   -> [B, 128, 8, 8]
-        #   x = global_pool(x)        # [B, 128, 8, 8]   -> [B, 128, 1, 1]
-        #   x = x.flatten(1)          # [B, 128, 1, 1]   -> [B, 128]
-        #   x = fc(x)                 # [B, 128]         -> [B, num_classes]
-        #
-        # 练习：计算每一层的 FLOPs（乘加次数）。
-        # 例如 Conv2d(3, 32, 3, padding=1) on 32×32 input:
-        #   FLOPs = 2 × Cout × Cin × K × K × Hout × Wout
-        #         = 2 × 32 × 3 × 3 × 3 × 32 × 32 = 1,769,472
-        # =====================================================================
-        raise NotImplementedError("TODO [Step 1.2]: Implement forward pass")
+        # Block 1
+        x = self.relu(self.bn1(self.conv1(x)))  # [B, 3, 32, 32]  -> [B, 32, 32, 32]
+        x = self.pool1(x)                       # [B, 32, 32, 32] -> [B, 32, 16, 16]
+        # Block 2
+        x = self.relu(self.bn2(self.conv2(x)))  # [B, 32, 16, 16] -> [B, 64, 16, 16]
+        x = self.pool2(x)                       # [B, 64, 16, 16] -> [B, 64, 8, 8]
+        # Block 3
+        x = self.relu(self.bn3(self.conv3(x)))  # [B, 64, 8, 8]   -> [B, 128, 8, 8]
+        # Head
+        x = self.global_pool(x)                 # [B, 128, 8, 8]  -> [B, 128, 1, 1]
+        x = x.flatten(1)                        # [B, 128, 1, 1]  -> [B, 128]
+        x = self.fc(x)                          # [B, 128]        -> [B, num_classes]
+        return x
 
 
 def get_tiny_cnn_2d(num_classes=10, in_channels=3):

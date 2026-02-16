@@ -55,25 +55,15 @@ class SignalCNN1D(nn.Module):
         """
         super().__init__()
 
-        # =====================================================================
-        # TODO [Step 1.1]: Implement the network layers
-        #
-        # Build a 3-layer 1D CNN with the following structure:
-        #   conv1: Conv1d(in_channels, 16, kernel_size=7, padding=3)
-        #   conv2: Conv1d(16, 32, kernel_size=5, padding=2)
-        #   conv3: Conv1d(32, 64, kernel_size=3, padding=1)
-        #   pool:  AdaptiveAvgPool1d(output_size=1)
-        #   fc:    Linear(64, num_classes)
-        #   relu:  ReLU (shared activation, 可复用同一个)
-        #
-        # 为什么选这些 kernel size？
-        # - 第一层 kernel=7 捕获较宽的时域模式（如频率特征）
-        # - 后续层 kernel 逐渐变小，因为感受野已经通过堆叠扩大了
-        # - padding = (kernel_size - 1) // 2 保持序列长度不变（same padding）
-        #
-        # Hint: Use nn.Conv1d, nn.ReLU, nn.AdaptiveAvgPool1d, nn.Linear
-        # =====================================================================
-        raise NotImplementedError("TODO [Step 1.1]: Define network layers")
+        # 3-layer 1D CNN with increasing channels
+        # kernel=7 → 5 → 3: 第一层大感受野捕获频率特征，后续逐渐缩小
+        # padding = (kernel_size - 1) // 2 保持序列长度不变 (same padding)
+        self.conv1 = nn.Conv1d(in_channels, 16, kernel_size=7, padding=3)
+        self.conv2 = nn.Conv1d(16, 32, kernel_size=5, padding=2)
+        self.conv3 = nn.Conv1d(32, 64, kernel_size=3, padding=1)
+        self.relu = nn.ReLU()
+        self.pool = nn.AdaptiveAvgPool1d(output_size=1)
+        self.fc = nn.Linear(64, num_classes)
 
     def forward(self, x):
         """
@@ -86,20 +76,13 @@ class SignalCNN1D(nn.Module):
         Returns:
             Output tensor of shape [batch_size, num_classes]
         """
-        # =====================================================================
-        # TODO [Step 1.1]: Implement the forward pass
-        #
-        # Sequence:
-        #   x = relu(conv1(x))   # [B, 1, 128] -> [B, 16, 128]
-        #   x = relu(conv2(x))   # [B, 16, 128] -> [B, 32, 128]
-        #   x = relu(conv3(x))   # [B, 32, 128] -> [B, 64, 128]
-        #   x = pool(x)          # [B, 64, 128] -> [B, 64, 1]
-        #   x = x.flatten(1)     # [B, 64, 1]   -> [B, 64]
-        #   x = fc(x)            # [B, 64]      -> [B, num_classes]
-        #
-        # 练习：在每一步后加 print(x.shape) 验证 shape 变化是否符合预期。
-        # =====================================================================
-        raise NotImplementedError("TODO [Step 1.1]: Implement forward pass")
+        x = self.relu(self.conv1(x))   # [B, 1, 128] -> [B, 16, 128]
+        x = self.relu(self.conv2(x))   # [B, 16, 128] -> [B, 32, 128]
+        x = self.relu(self.conv3(x))   # [B, 32, 128] -> [B, 64, 128]
+        x = self.pool(x)               # [B, 64, 128] -> [B, 64, 1]
+        x = x.flatten(1)               # [B, 64, 1]   -> [B, 64]
+        x = self.fc(x)                 # [B, 64]      -> [B, num_classes]
+        return x
 
 
 def get_signal_cnn_1d(num_classes=5):
