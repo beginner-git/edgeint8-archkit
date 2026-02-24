@@ -28,6 +28,9 @@ Usage (self-test):
 """
 
 import numpy as np
+from tabulate import tabulate
+
+from src.quant import compute_scale_zp_symmetric
 
 
 def calibrate_minmax(activation_batches):
@@ -62,6 +65,13 @@ def calibrate_minmax(activation_batches):
     #       global_max = max(global_max, np.max(batch))
     #   return global_min, global_max
     # =========================================================================
+    global_min = np.min(activation_batches)
+    global_max = np.max(activation_batches)
+    for batch in activation_batches:
+        global_min = min(global_min, np.min(batch))
+        global_max = max(global_max, np.max(batch))
+    return global_min, global_max
+
     raise NotImplementedError("TODO [Step 2.2]: Implement calibrate_minmax")
 
 
@@ -103,6 +113,11 @@ def calibrate_percentile(activation_batches, percentile=99.99):
     #
     # Note: For ReLU activations (all >= 0), range_min will be close to 0.
     # =========================================================================
+    all_values = np.concatenate([b.flatten() for b in activation_batches])
+    range_min = np.percentile(all_values, 100 - percentile)
+    range_max = np.percentile(all_values, percentile)
+    return range_min, range_max
+
     raise NotImplementedError("TODO [Step 2.2]: Implement calibrate_percentile")
 
 
@@ -146,6 +161,55 @@ def calibrate_entropy(activation_batches, num_bins=2048):
     #
     # Reference: TensorRT developer guide on calibration
     # =========================================================================
+    num_bits = 8
+    num_qbins = 2 ** (num_bits - 1)
+    all_values = np.abs(np.concatenate([b.flatten() for b in activation_batches]))
+    abs_max = np.max(all_values)
+    hist, bins = np.histogram(all_values, bins=num_bins, range=(0, abs_max))
+
+    best_kl = float("inf")
+    best_threshold_bin = num_bins
+
+    for i in range(num_bins//2, num_bins):
+        p = hist[:i].copy().astype(np.float32)
+        p[i-1] += np.sum(hist[i:])
+
+        # num_merged = int(i / 128)
+        q = np.zeros(i, dtype=np.float32)
+        for j in range(num_qbins):
+            start = int(round(j * i / num_qbins))
+            end = int(round((j + 1) * i / num_qbins))
+
+            merged_count = np.sum(p[start:end])
+
+            num_orig_bins = end - start
+            if num_orig_bins > 0:
+                nonzero = np.count_nonzero(p[start:end])
+                if nonzero > 0:
+                    q[start:end] = np.where(
+                        p[start:end] > 0,
+                        merged_count / nonzero, 0
+                    )
+
+        p_sum = np.sum(p)
+        q_sum = np.sum(q)
+        if p_sum == 0 or q_sum == 0:
+            continue
+        p = p / p_sum
+        q = q / q_sum
+
+        mask = (p>0) & (q>0)
+        kl = np.sum(p[mask] * np.log(p[mask] / q[mask]))
+
+        if kl < best_kl:
+            best_kl = kl
+            best_threshold_bin = i
+
+    threshold =bins[best_threshold_bin + 1]
+
+    return -threshold, threshold
+
+
     raise NotImplementedError("TODO [Step 2.2]: Implement calibrate_entropy (optional)")
 
 
@@ -198,6 +262,33 @@ def collect_layer_activations(model, data_loader, num_batches=10):
     #
     #   return activations
     # =========================================================================
+    import torch
+    activations = {}
+    hooks = []
+
+    def make_hook(name):
+        def hook_fn(module, input, output):
+            if name not in activations:
+                activations[name] = []
+            activations[name].append(output.detach().cpu().numpy())
+        return hook_fn
+
+    for name, module in model.named_modules():
+        if isinstance(module, (torch.nn.Conv2d, torch.nn.Linear, torch.nn.Conv1d)):
+            hooks.append(module.register_forward_hook(make_hook(name)))
+
+    model.eval()
+    with torch.no_grad():
+        for i, (data, _) in enumerate(data_loader):
+            if i >= num_batches:
+                break
+            model(data)
+
+    for h in hooks:
+        h.remove()
+
+    return activations
+
     raise NotImplementedError("TODO [Step 2.2]: Implement collect_layer_activations")
 
 
@@ -225,6 +316,51 @@ def compare_calibration_methods(model, data_loader, num_batches=10):
     #
     # 这个对比帮助你理解：不同校准方法对哪些层影响最大？
     # =========================================================================
+    from src.quant.quantize_utils import (
+        compute_scale_zp_symmetric,
+        quantize_tensor,
+        dequantize_tensor,
+        compute_quantization_error
+    )
+
+    comparison = {}
+    all_rows = []
+
+    model_activations = collect_layer_activations(model, data_loader, num_batches)
+    for layer_name, activations in model_activations.items():
+        comparison[layer_name] = {}
+        all_data = np.concatenate([b.flatten() for b in activations])
+        methods = {
+            "MinMax": calibrate_minmax(activations),
+            "Percentile_99.99": calibrate_percentile(activations, percentile=99.99),
+            "Percentile_99.9": calibrate_percentile(activations, percentile=99.9),
+        }
+
+        for method_name, (x_min, x_max) in methods.items():
+            comparison[layer_name][method_name] = (x_min, x_max)
+            act_method = np.clip(all_data, x_min, x_max)
+
+            scale, zero_point = compute_scale_zp_symmetric(tensor=act_method, num_bits=8)
+            act_q = quantize_tensor(tensor=act_method, scale=scale, zero_point=zero_point)
+            act_hat = dequantize_tensor(q_tensor=act_q, scale=scale, zero_point=zero_point)
+            error = compute_quantization_error(original=all_data, reconstructed=act_hat)
+
+            all_rows.append([
+                layer_name,
+                method_name,
+                f"[{x_min:.4f}, {x_max:.4f}]",
+                f"{error['mse']:.6f}",
+                f"{error['max_error']:.4f}",
+                f"{error['sqnr_db']:.1f}",
+            ])
+    print("\n" + tabulate(
+        all_rows,
+        headers=["Layer", "Method", "Range", "MSE", "MaxErr", "SQNR(dB)"],
+        tablefmt="grid"
+    ))
+
+    return comparison
+
     raise NotImplementedError("TODO [Step 2.2]: Implement compare_calibration_methods")
 
 

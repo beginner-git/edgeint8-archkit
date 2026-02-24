@@ -79,6 +79,11 @@ def compute_scale_zp_symmetric(tensor, num_bits=8):
     #
     # Edge case: if tensor is all zeros, scale should be 1.0 (or any positive)
     # =========================================================================
+    qmax = 2 ** (num_bits - 1) - 1
+    max_abs = np.max(np.abs(tensor))
+    scale = max_abs / qmax if max_abs > 0 else 1.0
+    zero_point = 0
+    return scale, zero_point
     raise NotImplementedError("TODO [Step 2.1]: Implement compute_scale_zp_symmetric")
 
 
@@ -136,6 +141,15 @@ def compute_scale_zp_asymmetric(tensor, num_bits=8):
     #   6. zero_point = np.clip(zero_point, qmin, qmax)
     #   7. return scale, int(zero_point)
     # =========================================================================
+    qmin , qmax = 0, 2 ** num_bits - 1
+    min_val = np.min(tensor)
+    max_val = np.max(tensor)
+    scale = (max_val - min_val) / (qmax - qmin)
+    if scale == 0:
+        scale = 1.0
+    zero_point = (np.round(qmin - min_val / scale)).astype(np.int8)
+    zero_point = np.clip(zero_point, qmin, qmax)
+    return scale, zero_point
     raise NotImplementedError("TODO [Step 2.1]: Implement compute_scale_zp_asymmetric")
 
 
@@ -176,6 +190,20 @@ def quantize_tensor(tensor, scale, zero_point, num_bits=8, symmetric=True):
     # 这与 C/硬件中常用的 "round half away from zero" 不同。
     # 实际硬件中使用哪种 rounding 策略会影响量化误差。
     # =========================================================================
+    if symmetric:
+        qmax = 2 ** (num_bits - 1) - 1
+        qmin = -2 ** (num_bits - 1)
+        q_tensor = np.round(tensor / scale)
+        q_tensor = np.clip(q_tensor, qmin, qmax).astype(np.int8)
+
+    else:
+        qmax = 2 ** num_bits - 1
+        qmin = 0
+        q_tensor = np.round(tensor / scale) + zero_point
+        q_tensor = np.clip(q_tensor, qmin, qmax).astype(np.uint8)
+
+    return q_tensor
+
     raise NotImplementedError("TODO [Step 2.1]: Implement quantize_tensor")
 
 
@@ -203,6 +231,9 @@ def dequantize_tensor(q_tensor, scale, zero_point):
     #
     # 反量化后的值 x_hat 不会完全等于原始值 x，差异就是"量化误差"。
     # =========================================================================
+    tensor_hat = ((q_tensor - zero_point) * scale).astype(np.float32)
+    return tensor_hat
+
     raise NotImplementedError("TODO [Step 2.1]: Implement dequantize_tensor")
 
 
@@ -235,6 +266,19 @@ def compute_quantization_error(original, reconstructed):
     #
     # 这些指标帮助你量化地评估量化策略的好坏。
     # =========================================================================
+    error = original - reconstructed
+    mse = np.mean(error**2)
+    max_abs_error = np.max(np.abs(error))
+    mean_abs_error = np.mean(np.abs(error))
+
+    q_matrix = {}
+    q_matrix['mse'] = mse
+    q_matrix['max_abs_error'] = max_abs_error
+    q_matrix['mean_abs_error'] = mean_abs_error
+    q_matrix['sqnr_db'] = 10 * np.log10(np.mean(original**2) / mse)
+
+    return q_matrix
+
     raise NotImplementedError("TODO [Step 2.1]: Implement compute_quantization_error")
 
 

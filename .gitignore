@@ -34,3 +34,4 @@ models/*.onnx
 models/*.onnx.data
 *.onnx
 *.onnx.data
+.claude/
