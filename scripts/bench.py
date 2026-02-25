@@ -224,7 +224,12 @@ def benchmark_comparison(model_paths, test_loader, dummy_input_np):
         results.append(result)
 
     # Calculate speedup relative to first model (FP32 baseline)
-    baseline_latency = results[0]['latency']['mean_ms']
+    baseline = None
+    for r in results:
+        if "int8" not in r['name'].lower():
+            baseline = r
+            break
+    baseline_latency = baseline['latency']['mean_ms'] if baseline else results[0]['latency']['mean_ms']
     for r in results:
         r['speedup'] = baseline_latency / r['latency']['mean_ms']
 
