@@ -86,11 +86,23 @@ class CifarCalibrationDataReader(CalibrationDataReaderBase):
         # 注意：ORT 需要 numpy array，不是 torch tensor！
         # 转换：data_np = data.numpy().astype(np.float32)
         # =====================================================================
-        raise NotImplementedError("TODO [Step 2.3]: Init calibration reader")
+        self.data = []
+        for data, _ in calibration_loader:
+            for i in range(data.shape[0]):
+                data_np = data[i:i+1].numpy().astype(np.float32)
+                self.data.append({input_name: data_np})
+        self.iter = 0
+
+        # raise NotImplementedError("TODO [Step 2.3]: Init calibration reader")
 
     def get_next(self):
         """Return next calibration sample, or None if exhausted."""
-        raise NotImplementedError("TODO [Step 2.3]: Implement get_next")
+        if self.iter >= len(self.data):
+            return None
+        result = self.data[self.iter]
+        self.iter += 1
+        return result
+        # raise NotImplementedError("TODO [Step 2.3]: Implement get_next")
 
 
 class SignalCalibrationDataReader(CalibrationDataReaderBase):
@@ -100,10 +112,21 @@ class SignalCalibrationDataReader(CalibrationDataReaderBase):
         # =====================================================================
         # TODO [Step 2.3]: Same as CifarCalibrationDataReader but for 1D data
         # =====================================================================
-        raise NotImplementedError("TODO [Step 2.3]: Init signal calibration reader")
+        self.data = []
+        for data, _ in calibration_loader:
+            for i in range(data.shape[0]):
+                data_np = data[i:i + 1].numpy().astype(np.float32)
+                self.data.append({input_name: data_np})
+        self.iter = 0
+        # raise NotImplementedError("TODO [Step 2.3]: Init signal calibration reader")
 
     def get_next(self):
-        raise NotImplementedError("TODO [Step 2.3]: Implement get_next")
+        if self.iter >= len(self.data):
+            return None
+        result = self.data[self.iter]
+        self.iter += 1
+        return result
+        # raise NotImplementedError("TODO [Step 2.3]: Implement get_next")
 
 
 def quantize_model_static(model_path, output_path, calibration_reader,
@@ -177,6 +200,35 @@ def quantize_model_static(model_path, output_path, calibration_reader,
     #    - QDQ: 在图中插入 QuantizeLinear/DequantizeLinear 节点（推荐）
     #    - QOperator: 直接使用量化算子如 QLinearConv（老格式）
     # =========================================================================
+    from onnxruntime.quantization import (
+        quantize_static,
+        CalibrationMethod,
+        QuantType,
+        QuantFormat
+    )
+
+    calibration_method_map = {
+        "MinMax": CalibrationMethod.MinMax,
+        "Entropy": CalibrationMethod.Entropy,
+        "Percentile": CalibrationMethod.Percentile,
+    }
+    quant_type_map = {
+        "QUInt8": QuantType.QUInt8,
+        "QInt8": QuantType.QInt8,
+    }
+
+    quantize_static(
+        model_input=model_path,
+        model_output=output_path,
+        calibration_data_reader=calibration_reader,
+        quant_format=QuantFormat.QDQ,
+        per_channel=per_channel,
+        calibrate_method=calibration_method_map[calibrate_method],
+        activation_type=quant_type_map[activation_type],
+        weight_type=quant_type_map[weight_type],
+    )
+    return output_path
+
     raise NotImplementedError("TODO [Step 2.3]: Implement quantize_model_static")
 
 
@@ -222,7 +274,36 @@ def run_quantization_sweep(model_path, calibration_reader, output_dir):
     # 注意：每次调用 quantize_static 都会消耗 calibration reader 的数据，
     # 所以需要每次创建一个新的 reader，或者在 reader 中实现 reset 功能。
     # =========================================================================
-    raise NotImplementedError("TODO [Step 2.3]: Implement quantization sweep")
+    ensure_dir(output_dir)
+
+    configs = list(itertools.product(
+        [True, False],
+        ["MinMax", "Percentile"],
+        ["QUInt8", "QInt8"],
+    ))
+
+    results = []
+    for per_channel, calib_method, act_type in configs:
+        name = (f"int8_{'perchan' if per_channel else 'pertensor'}"
+                f"_{calib_method.lower()}_{act_type.lower()}")
+        output_path = os.path.join(output_dir, f"{name}.onnx")
+
+        fresh_reader = calibration_reader()
+
+        quantize_model_static(
+            model_path=model_path,
+            output_path=output_path,
+            calibration_reader=fresh_reader,
+            per_channel=per_channel,
+            calibrate_method=calib_method,
+            activation_type=act_type,
+        )
+        results.append((name, output_path))
+        print(f"Generated {name}")
+
+    return results
+
+    # raise NotImplementedError("TODO [Step 2.3]: Implement quantization sweep")
 
 
 if __name__ == "__main__":
@@ -245,4 +326,10 @@ if __name__ == "__main__":
     #    Else: run single quantization with default settings
     # 3. Print summary of generated models
     # =========================================================================
+    calibration_loader, _ = get_cifar10_loaders(data_dir="data/cifar10")
+    # DataReader = CifarCalibrationDataReader(calibration_loader)
+    reader_facroty = lambda: CifarCalibrationDataReader(calibration_loader)
+    if args.sweep:
+        results = run_quantization_sweep(args.model, reader_facroty, output_dir="models")
+
     print("TODO: Implement quantization main script")
