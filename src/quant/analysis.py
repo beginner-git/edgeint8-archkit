@@ -29,6 +29,8 @@ Usage:
 
 import numpy as np
 
+from src.quant import compute_scale_zp_symmetric, quantize_tensor
+
 
 def analyze_per_layer_sensitivity(model, test_loader, num_batches=10):
     """
@@ -82,6 +84,26 @@ def analyze_per_layer_sensitivity(model, test_loader, num_batches=10):
     #           error = compute_quantization_error(param.data.numpy(), deq)
     #           sensitivity[name] = error['mse']
     # =========================================================================
+    from src.quant.quantize_utils import (
+        compute_scale_zp_symmetric,
+        quantize_tensor,
+        dequantize_tensor,
+        compute_quantization_error
+    )
+
+    sensitivity = {}
+    for name, param in model.named_parameters():
+        if "weight" in name:
+            weight_np = param.data.cpu().numpy()
+            scale, zp = compute_scale_zp_symmetric(weight_np)
+            q = quantize_tensor(weight_np, scale, zp)
+            deq = dequantize_tensor(q, scale, zp)
+            error = compute_quantization_error(weight_np, deq)
+            sensitivity[name] = error["mse"]
+
+    sensitivity = dict(sorted(sensitivity.items(), key=lambda x: x[-1]))
+    return sensitivity
+
     raise NotImplementedError("TODO [Step 2.5]: Implement per-layer sensitivity analysis")
 
 
@@ -118,6 +140,45 @@ def generate_error_report(model, data_loader, num_batches=5):
     # Output format should be printable as a table:
     #   Layer | Weight MSE | Weight SQNR | Act MSE | Act SQNR | Sensitivity
     # =========================================================================
+    from src.quant.quantize_utils import (
+        compute_scale_zp_symmetric,
+        quantize_tensor,
+        dequantize_tensor,
+        compute_quantization_error
+    )
+    from src.quant.calibration import collect_layer_activations
+
+    report = {}
+
+    for name, param in model.named_parameters():
+        if "weight" in name:
+            w = param.data.cpu().numpy()
+            scale, zp = compute_scale_zp_symmetric(w)
+            q = quantize_tensor(w, scale, zp)
+            deq = dequantize_tensor(q, scale, zp)
+            error = compute_quantization_error(w, deq)
+            report[name] = {
+                'weight_mse': error["mse"],
+                'weight_sqnr': error["sqnr_db"],
+                'weight_range': (float(w.min()), float(w.max())),
+            }
+
+    activations = collect_layer_activations(model, data_loader, num_batches=num_batches)
+    for layer_name, batches in activations.items():
+        all_data = np.concatenate([b.flatten() for b in batches])
+        scale, zp = compute_scale_zp_symmetric(all_data)
+        q = quantize_tensor(all_data, scale, zp)
+        deq = dequantize_tensor(q, scale, zp)
+        error = compute_quantization_error(all_data, deq)
+
+        wight_key = layer_name + ".weight"
+        if wight_key not in report:
+            report[wight_key]['activation_mse'] = error["mse"]
+            report[wight_key]['activation_sqnr'] = error["sqnr_db"]
+            report[wight_key]['weight_range'] = (float(all_data.min()), float(all_data.max()))
+
+    return report
+
     raise NotImplementedError("TODO [Step 2.5]: Implement generate_error_report")
 
 
@@ -151,12 +212,49 @@ def identify_sensitive_layers(error_report, threshold_sqnr=40.0):
     # - 保留 FP32（mixed precision）
     # - 使用 QAT（量化感知训练）重新训练
     # =========================================================================
+    threshold_sqnr = 40
+
+    sensitive_layers = []
+    for layer_name, errors in error_report.items():
+        if errors.get('weight_sqnr', 100) < threshold_sqnr:
+            sensitive_layers.append(layer_name)
+
+    return sensitive_layers
+
     raise NotImplementedError("TODO [Step 2.5]: Implement identify_sensitive_layers")
 
 
 if __name__ == "__main__":
-    print("Per-layer analysis requires a trained model.")
-    print("Run after completing Step 1.4 (training).")
-    print("\nUsage:")
-    print("  from src.quant.analysis import analyze_per_layer_sensitivity")
-    print("  sensitivity = analyze_per_layer_sensitivity(model, test_loader)")
+    # print("Per-layer analysis requires a trained model.")
+    # print("Run after completing Step 1.4 (training).")
+    # print("\nUsage:")
+    # print("  from src.quant.analysis import analyze_per_layer_sensitivity")
+    # print("  sensitivity = analyze_per_layer_sensitivity(model, test_loader)")
+
+    import torch
+    from models import get_tiny_cnn_2d
+    from src.utils.data import get_cifar10_loaders
+    # from src.quant.analysis import analyze_per_layer_sensitivity, generate_error_report, identify_sensitive_layers
+
+    model = get_tiny_cnn_2d()
+    model.load_state_dict(torch.load('models/tiny_cnn_2d.pth', map_location='cpu'))
+    model.eval()
+
+    _, test_loader = get_cifar10_loaders()
+
+    # 1. 敏感度排名
+    print('=== Sensitivity ===')
+    sens = analyze_per_layer_sensitivity(model, test_loader)
+    for name, mse in sens.items():
+        print(f'  {name}: MSE={mse:.6f}')
+
+    # 2. 完整报告
+    print('\n=== Error Report ===')
+    report = generate_error_report(model, test_loader)
+    for name, errors in report.items():
+        print(f'  {name}: SQNR={errors.get("weight_sqnr", "N/A"):.1f} dB')
+
+    # 3. 敏感层
+    print('\n=== Sensitive Layers (SQNR < 40 dB) ===')
+    sensitive = identify_sensitive_layers(report)
+    print(f'  {sensitive if sensitive else "None"}')

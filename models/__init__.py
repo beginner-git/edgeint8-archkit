@@ -11,5 +11,5 @@ This package contains two workload models:
 而是用它们来学习量化、定点、架构评估的完整流程。
 """
 
-from .signal_cnn_1d import SignalCNN1D, get_signal_cnn_1d
+# from .signal_cnn_1d import SignalCNN1D, get_signal_cnn_1d
 from .tiny_cnn_2d import TinyCNN2D, get_tiny_cnn_2d
