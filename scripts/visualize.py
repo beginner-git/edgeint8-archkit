@@ -38,68 +38,160 @@ def plot_accuracy_comparison(results_csv, output_path="results/figures/accuracy_
         results_csv: Path to benchmark comparison CSV
         output_path: Path to save the figure
     """
-    # =========================================================================
-    # TODO [Step 2.6]: Implement accuracy comparison bar chart
-    #
-    # Steps:
-    #   import pandas as pd
-    #   import matplotlib.pyplot as plt
-    #
-    #   df = pd.read_csv(results_csv)
-    #   fig, ax = plt.subplots(figsize=(10, 6))
-    #   ax.bar(df['model'], df['accuracy'])
-    #   ax.set_ylabel('Accuracy')
-    #   ax.set_title('Quantization Strategy Comparison: Accuracy')
-    #   ax.axhline(y=fp32_accuracy, color='r', linestyle='--', label='FP32 baseline')
-    #   plt.xticks(rotation=45, ha='right')
-    #   plt.tight_layout()
-    #   plt.savefig(output_path, dpi=150)
-    #
-    # 图表设计建议：
-    # - 用红色虚线标出 FP32 baseline
-    # - 按精度从高到低排序
-    # - 标注精度下降最大的配置
-    # =========================================================================
-    raise NotImplementedError("TODO [Step 2.6]: Implement accuracy comparison chart")
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv(results_csv)
+    df['accuracy'] = df['accuracy'].astype(float)
+    df = df.sort_values('accuracy', ascending=False)
+
+    # Identify FP32 baseline
+    fp32_row = df[~df['model'].str.contains('int8', case=False)]
+    fp32_accuracy = float(fp32_row['accuracy'].iloc[0]) if len(fp32_row) > 0 else None
+
+    # Color: blue for FP32, green for INT8
+    colors = ['#2196F3' if 'int8' not in m.lower() else '#4CAF50' for m in df['model']]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    bars = ax.bar(range(len(df)), df['accuracy'], color=colors)
+
+    # FP32 baseline line
+    if fp32_accuracy is not None:
+        ax.axhline(y=fp32_accuracy, color='r', linestyle='--', linewidth=1.5, label=f'FP32 baseline ({fp32_accuracy:.4f})')
+        ax.legend(fontsize=10)
+
+    # Label the bar with lowest accuracy
+    min_idx = df['accuracy'].idxmin()
+    min_pos = list(df.index).index(min_idx)
+    bars[min_pos].set_color('#F44336')
+
+    ax.set_xticks(range(len(df)))
+    ax.set_xticklabels(df['model'], rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel('Accuracy', fontsize=12)
+    ax.set_title('Quantization Strategy Comparison: Accuracy', fontsize=14)
+
+    ensure_dir(os.path.dirname(output_path))
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved: {output_path}")
 
 
 def plot_latency_comparison(results_csv, output_path="results/figures/latency_comparison.png"):
     """Bar chart comparing latency across models."""
-    # =========================================================================
-    # TODO [Step 2.6]: Implement latency comparison bar chart
-    #
-    # Similar to accuracy chart but with latency on y-axis.
-    # Include error bars using std.
-    # Color-code: FP32 in blue, INT8 variants in green shades.
-    # =========================================================================
-    raise NotImplementedError("TODO [Step 2.6]: Implement latency comparison chart")
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv(results_csv)
+    df['latency_mean_ms'] = df['latency_mean_ms'].astype(float)
+    df['latency_std_ms'] = df['latency_std_ms'].astype(float)
+    df = df.sort_values('latency_mean_ms', ascending=True)
+
+    # Color: blue for FP32, green for INT8
+    colors = ['#2196F3' if 'int8' not in m.lower() else '#4CAF50' for m in df['model']]
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.bar(range(len(df)), df['latency_mean_ms'], yerr=df['latency_std_ms'],
+           color=colors, capsize=4, edgecolor='black', linewidth=0.5)
+
+    ax.set_xticks(range(len(df)))
+    ax.set_xticklabels(df['model'], rotation=45, ha='right', fontsize=9)
+    ax.set_ylabel('Latency (ms)', fontsize=12)
+    ax.set_title('Quantization Strategy Comparison: Latency', fontsize=14)
+
+    ensure_dir(os.path.dirname(output_path))
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved: {output_path}")
 
 
 def plot_accuracy_vs_latency(results_csv, output_path="results/figures/acc_vs_latency.png"):
     """Scatter plot: accuracy vs latency for all models."""
-    # =========================================================================
-    # TODO [Step 2.6]: Implement accuracy-latency scatter plot
-    #
-    # This is the most informative chart for quantization analysis:
-    # x-axis: latency (ms), y-axis: accuracy
-    # Each point is labeled with the model/strategy name
-    # Ideal: top-left corner (high accuracy, low latency)
-    #
-    # 这张图直观展示了精度-延迟的 trade-off，面试时非常有说服力。
-    # =========================================================================
-    raise NotImplementedError("TODO [Step 2.6]: Implement accuracy-latency scatter")
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    df = pd.read_csv(results_csv)
+    df['latency_mean_ms'] = df['latency_mean_ms'].astype(float)
+    df['accuracy'] = df['accuracy'].astype(float)
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    for _, row in df.iterrows():
+        is_fp32 = 'int8' not in row['model'].lower()
+        color = '#2196F3' if is_fp32 else '#4CAF50'
+        marker = 's' if is_fp32 else 'o'
+        size = 120 if is_fp32 else 80
+        ax.scatter(row['latency_mean_ms'], row['accuracy'],
+                   c=color, marker=marker, s=size, edgecolors='black', linewidth=0.5, zorder=3)
+        # Label each point
+        label = row['model'].replace('.onnx', '').replace('int8_', '')
+        ax.annotate(label, (row['latency_mean_ms'], row['accuracy']),
+                    textcoords="offset points", xytext=(5, 5), fontsize=7, alpha=0.8)
+
+    # Mark ideal region (top-left)
+    ax.annotate('← Ideal', xy=(ax.get_xlim()[0], ax.get_ylim()[1]),
+                fontsize=10, color='gray', style='italic',
+                xytext=(10, -15), textcoords='offset points')
+
+    ax.set_xlabel('Latency (ms)', fontsize=12)
+    ax.set_ylabel('Accuracy', fontsize=12)
+    ax.set_title('Accuracy vs Latency Trade-off', fontsize=14)
+    ax.grid(True, alpha=0.3)
+
+    ensure_dir(os.path.dirname(output_path))
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved: {output_path}")
 
 
 def plot_error_distribution(error_data, output_path="results/figures/error_distribution.png"):
     """Histogram of quantization errors per layer."""
-    # =========================================================================
-    # TODO [Step 2.6]: Implement per-layer error distribution histogram
-    #
-    # Input: error_data is a dict of {layer_name: error_array}
-    # Create subplots, one per layer, showing error distribution
-    # Mark: mean error, max error, std
-    # =========================================================================
-    raise NotImplementedError("TODO [Step 2.6]: Implement error distribution plot")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    num_layers = len(error_data)
+    if num_layers == 0:
+        print("No error data to plot.")
+        return
+
+    cols = min(3, num_layers)
+    rows = (num_layers + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+    if num_layers == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten()
+
+    for idx, (layer_name, errors) in enumerate(error_data.items()):
+        ax = axes[idx]
+        errors = np.array(errors)
+        ax.hist(errors, bins=50, color='#4CAF50', edgecolor='black', linewidth=0.5, alpha=0.8)
+
+        # Mark statistics
+        mean_err = np.mean(errors)
+        max_err = np.max(np.abs(errors))
+        std_err = np.std(errors)
+        ax.axvline(mean_err, color='r', linestyle='--', linewidth=1.5, label=f'mean={mean_err:.4f}')
+        ax.axvline(mean_err + std_err, color='orange', linestyle=':', linewidth=1, label=f'std={std_err:.4f}')
+        ax.axvline(mean_err - std_err, color='orange', linestyle=':', linewidth=1)
+
+        ax.set_title(layer_name, fontsize=10)
+        ax.legend(fontsize=7)
+        ax.set_xlabel('Quantization Error')
+        ax.set_ylabel('Count')
+
+    # Hide unused subplots
+    for idx in range(num_layers, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle('Per-Layer Quantization Error Distribution', fontsize=14)
+    ensure_dir(os.path.dirname(output_path))
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+    print(f"Saved: {output_path}")
 
 
 # =============================================================================
@@ -143,7 +235,25 @@ if __name__ == "__main__":
 
     ensure_dir("results/figures")
 
-    # =========================================================================
-    # TODO: Call appropriate plotting functions based on --type argument
-    # =========================================================================
-    print("TODO: Implement visualization main script")
+    default_csv = "results/tables/benchmark_comparison.csv"
+    data_path = args.data if args.data else default_csv
+
+    if args.type in ("quantization", "all"):
+        if os.path.exists(data_path):
+            print(f"Generating Part B charts from: {data_path}")
+            plot_accuracy_comparison(data_path)
+            plot_latency_comparison(data_path)
+            plot_accuracy_vs_latency(data_path)
+        else:
+            print(f"CSV not found: {data_path}")
+            print("Run 'python scripts/bench.py --all --workload 2d' first.")
+
+    if args.type in ("dse", "all"):
+        dse_path = args.data if args.data else "results/tables/dse_results.csv"
+        if os.path.exists(dse_path):
+            print(f"Generating Part D charts from: {dse_path}")
+            plot_dse_cycles(dse_path)
+            plot_dse_utilization(dse_path)
+        else:
+            print(f"DSE CSV not found: {dse_path}")
+            print("Run 'python scripts/run_arch_eval.py' first (Part D).")
